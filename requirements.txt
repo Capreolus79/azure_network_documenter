@@ -1,0 +1,7 @@
+# Azure Network Documenter Requirements
+# No external dependencies required - uses only Python standard library
+# Azure CLI must be installed and logged in for live data collection
+
+# Optional: For enhanced functionality
+# azure-identity>=1.14.0    # Alternative to Azure CLI authentication
+# azure-mgmt-network>=25.0.0  # Direct SDK access (alternative to CLI)
