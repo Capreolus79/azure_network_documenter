@@ -5,7 +5,24 @@ Builds a graph representation of the Azure network and analyzes connectivity.
 
 from dataclasses import dataclass, field
 from typing import Optional
-import ipaddress
+
+from utils import extract_name_from_id
+
+
+# Security analysis constants
+RISKY_PORTS = {
+    "22": "SSH - Remote access",
+    "3389": "RDP - Remote Desktop",
+    "445": "SMB - File sharing",
+    "1433": "SQL Server",
+    "3306": "MySQL",
+    "5432": "PostgreSQL",
+    "27017": "MongoDB",
+    "6379": "Redis",
+    "9200": "Elasticsearch",
+}
+
+INTERNET_SOURCES = {"*", "Internet", "0.0.0.0/0", "Any"}
 
 
 @dataclass
@@ -45,7 +62,7 @@ class AccessRule:
 class NetworkGraphBuilder:
     """Builds and analyzes network topology graph."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.nodes: dict[str, NetworkNode] = {}
         self.edges: list[NetworkEdge] = []
         self.access_rules: list[AccessRule] = []
@@ -104,22 +121,15 @@ class NetworkGraphBuilder:
 
         return self.get_graph_data()
 
-    def _add_node(self, node: NetworkNode):
+    def _add_node(self, node: NetworkNode) -> None:
         """Add a node to the graph."""
         self.nodes[node.id] = node
 
-    def _add_edge(self, edge: NetworkEdge):
+    def _add_edge(self, edge: NetworkEdge) -> None:
         """Add an edge to the graph."""
         self.edges.append(edge)
 
-    def _extract_name_from_id(self, resource_id: str) -> str:
-        """Extract resource name from Azure resource ID."""
-        if not resource_id:
-            return ""
-        parts = resource_id.split("/")
-        return parts[-1] if parts else ""
-
-    def _process_vnets(self, vnets: list):
+    def _process_vnets(self, vnets: list[dict]) -> None:
         """Process Virtual Networks."""
         for vnet in vnets:
             node = NetworkNode(
@@ -137,7 +147,7 @@ class NetworkGraphBuilder:
             )
             self._add_node(node)
 
-    def _process_subnets(self, subnets: list):
+    def _process_subnets(self, subnets: list[dict]) -> None:
         """Process Subnets."""
         for subnet in subnets:
             vnet_name = subnet.get("vnet", "")
@@ -160,8 +170,8 @@ class NetworkGraphBuilder:
                     "addressPrefix": subnet.get("addressPrefix", ""),
                     "addressPrefixes": subnet.get("addressPrefixes", []),
                     "vnet": vnet_name,
-                    "nsg": self._extract_name_from_id(subnet.get("nsg_id")),
-                    "routeTable": self._extract_name_from_id(subnet.get("routeTable_id")),
+                    "nsg": extract_name_from_id(subnet.get("nsg_id")),
+                    "routeTable": extract_name_from_id(subnet.get("routeTable_id")),
                     "serviceEndpoints": [se.get("service") for se in subnet.get("serviceEndpoints", [])],
                     "delegations": [d.get("serviceName") for d in subnet.get("delegations", [])],
                     "ipConfigCount": len(subnet.get("ipConfigurations", [])),
@@ -194,7 +204,7 @@ class NetworkGraphBuilder:
                     edge_type="routes_via"
                 ))
 
-    def _process_nsgs(self, nsgs: list):
+    def _process_nsgs(self, nsgs: list[dict]) -> None:
         """Process Network Security Groups and their rules."""
         for nsg in nsgs:
             node = NetworkNode(
@@ -205,8 +215,8 @@ class NetworkGraphBuilder:
                 properties={
                     "location": nsg.get("location", ""),
                     "customRuleCount": len(nsg.get("customRules", [])),
-                    "associatedSubnets": [self._extract_name_from_id(s.get("id")) for s in nsg.get("subnets", [])],
-                    "associatedNics": [self._extract_name_from_id(n.get("id")) for n in nsg.get("networkInterfaces", [])],
+                    "associatedSubnets": [extract_name_from_id(s.get("id")) for s in nsg.get("subnets", [])],
+                    "associatedNics": [extract_name_from_id(n.get("id")) for n in nsg.get("networkInterfaces", [])],
                 }
             )
             self._add_node(node)
@@ -234,7 +244,7 @@ class NetworkGraphBuilder:
                 )
                 self.access_rules.append(access_rule)
 
-    def _process_firewalls(self, firewalls: list):
+    def _process_firewalls(self, firewalls: list[dict]) -> None:
         """Process Azure Firewalls."""
         for fw in firewalls:
             node = NetworkNode(
@@ -246,7 +256,7 @@ class NetworkGraphBuilder:
                     "location": fw.get("location", ""),
                     "sku": fw.get("sku", {}).get("tier", ""),
                     "threatIntelMode": fw.get("threatIntelMode", ""),
-                    "firewallPolicy": self._extract_name_from_id(fw.get("firewallPolicy", {}).get("id")) if fw.get("firewallPolicy") else None,
+                    "firewallPolicy": extract_name_from_id(fw.get("firewallPolicy", {}).get("id")) if fw.get("firewallPolicy") else None,
                     "ipConfigurations": fw.get("ipConfigurations_processed", []),
                     "privateIp": next((ip.get("privateIpAddress") for ip in fw.get("ipConfigurations_processed", []) if ip.get("privateIpAddress")), None),
                 }
@@ -262,7 +272,7 @@ class NetworkGraphBuilder:
                         edge_type="contains"
                     ))
 
-    def _process_firewall_policies(self, policies: list):
+    def _process_firewall_policies(self, policies: list[dict]) -> None:
         """Process Firewall Policies and rules."""
         for policy in policies:
             node = NetworkNode(
@@ -324,7 +334,7 @@ class NetworkGraphBuilder:
                             )
                             self.access_rules.append(access_rule)
 
-    def _process_route_tables(self, route_tables: list):
+    def _process_route_tables(self, route_tables: list[dict]) -> None:
         """Process Route Tables."""
         for rt in route_tables:
             node = NetworkNode(
@@ -336,12 +346,12 @@ class NetworkGraphBuilder:
                     "location": rt.get("location", ""),
                     "routes": rt.get("routes_processed", []),
                     "disableBgpRoutePropagation": rt.get("disableBgpRoutePropagation", False),
-                    "associatedSubnets": [self._extract_name_from_id(s.get("id")) for s in rt.get("subnets", [])],
+                    "associatedSubnets": [extract_name_from_id(s.get("id")) for s in rt.get("subnets", [])],
                 }
             )
             self._add_node(node)
 
-    def _process_private_endpoints(self, endpoints: list):
+    def _process_private_endpoints(self, endpoints: list[dict]) -> None:
         """Process Private Endpoints."""
         for ep in endpoints:
             node = NetworkNode(
@@ -351,7 +361,7 @@ class NetworkGraphBuilder:
                 resource_group=ep.get("resourceGroup", ""),
                 properties={
                     "location": ep.get("location", ""),
-                    "subnet": self._extract_name_from_id(ep.get("subnet", {}).get("id")) if ep.get("subnet") else None,
+                    "subnet": extract_name_from_id(ep.get("subnet", {}).get("id")) if ep.get("subnet") else None,
                     "connections": ep.get("connections", []),
                     "customDnsConfigs": ep.get("customDnsConfigs", []),
                 }
@@ -366,7 +376,7 @@ class NetworkGraphBuilder:
                     edge_type="contains"
                 ))
 
-    def _process_peerings(self, peerings: list):
+    def _process_peerings(self, peerings: list[dict]) -> None:
         """Process VNet Peerings."""
         for peering in peerings:
             # Find source VNet
@@ -392,7 +402,7 @@ class NetworkGraphBuilder:
                     }
                 ))
 
-    def _process_public_ips(self, public_ips: list):
+    def _process_public_ips(self, public_ips: list[dict]) -> None:
         """Process Public IP Addresses."""
         for pip in public_ips:
             node = NetworkNode(
@@ -404,12 +414,12 @@ class NetworkGraphBuilder:
                     "ipAddress": pip.get("ipAddress", ""),
                     "sku": pip.get("sku", {}).get("name", ""),
                     "allocationMethod": pip.get("publicIPAllocationMethod", ""),
-                    "associatedTo": self._extract_name_from_id(pip.get("ipConfiguration", {}).get("id")) if pip.get("ipConfiguration") else None,
+                    "associatedTo": extract_name_from_id(pip.get("ipConfiguration", {}).get("id")) if pip.get("ipConfiguration") else None,
                 }
             )
             self._add_node(node)
 
-    def _process_app_gateways(self, gateways: list):
+    def _process_app_gateways(self, gateways: list[dict]) -> None:
         """Process Application Gateways."""
         for gw in gateways:
             node = NetworkNode(
@@ -426,7 +436,7 @@ class NetworkGraphBuilder:
             )
             self._add_node(node)
 
-    def _process_load_balancers(self, lbs: list):
+    def _process_load_balancers(self, lbs: list[dict]) -> None:
         """Process Load Balancers."""
         for lb in lbs:
             node = NetworkNode(
@@ -444,7 +454,7 @@ class NetworkGraphBuilder:
             )
             self._add_node(node)
 
-    def _process_vnet_gateways(self, gateways: list):
+    def _process_vnet_gateways(self, gateways: list[dict]) -> None:
         """Process VNet Gateways."""
         for gw in gateways:
             node = NetworkNode(
@@ -462,7 +472,7 @@ class NetworkGraphBuilder:
             )
             self._add_node(node)
 
-    def _process_bastion_hosts(self, bastions: list):
+    def _process_bastion_hosts(self, bastions: list[dict]) -> None:
         """Process Bastion Hosts."""
         for bastion in bastions:
             node = NetworkNode(
@@ -478,14 +488,14 @@ class NetworkGraphBuilder:
             )
             self._add_node(node)
 
-    def _process_nics(self, nics: list):
+    def _process_nics(self, nics: list[dict]) -> None:
         """Process Network Interfaces to identify VMs."""
         for nic in nics:
             # Check if attached to a VM
             vm_id = nic.get("virtualMachine", {}).get("id") if nic.get("virtualMachine") else None
 
             if vm_id:
-                vm_name = self._extract_name_from_id(vm_id)
+                vm_name = extract_name_from_id(vm_id)
                 if vm_id not in self.nodes:
                     node = NetworkNode(
                         id=vm_id,
@@ -508,7 +518,7 @@ class NetworkGraphBuilder:
                     if private_ip:
                         self.nodes[vm_id].properties["privateIps"].append(private_ip)
                     if subnet_id:
-                        self.nodes[vm_id].properties["subnets"].append(self._extract_name_from_id(subnet_id))
+                        self.nodes[vm_id].properties["subnets"].append(extract_name_from_id(subnet_id))
 
                         # Add edge to subnet
                         self._add_edge(NetworkEdge(
@@ -517,7 +527,7 @@ class NetworkGraphBuilder:
                             edge_type="contains"
                         ))
 
-    def _process_dns_zones(self, zones: list):
+    def _process_dns_zones(self, zones: list[dict]) -> None:
         """Process Private DNS Zones."""
         for zone in zones:
             node = NetworkNode(
@@ -527,7 +537,7 @@ class NetworkGraphBuilder:
                 resource_group=zone.get("resourceGroup", ""),
                 properties={
                     "recordCount": zone.get("numberOfRecordSets", 0),
-                    "linkedVnets": [self._extract_name_from_id(l.get("virtualNetwork", {}).get("id"))
+                    "linkedVnets": [extract_name_from_id(l.get("virtualNetwork", {}).get("id"))
                                    for l in zone.get("virtualNetworkLinks", [])
                                    if l.get("virtualNetwork")],
                 }
@@ -581,8 +591,8 @@ class NetworkGraphBuilder:
         # Analyze peerings for inter-vnet connectivity
         for edge in self.edges:
             if edge.edge_type == "peering":
-                source_vnet = self._extract_name_from_id(edge.source_id)
-                target_vnet = self._extract_name_from_id(edge.target_id)
+                source_vnet = extract_name_from_id(edge.source_id)
+                target_vnet = extract_name_from_id(edge.target_id)
 
                 # Find subnets in each VNet
                 source_subnets = [s for s in subnets.values() if s.properties.get("vnet") == source_vnet]
@@ -614,22 +624,7 @@ class NetworkGraphBuilder:
 
         return self.connectivity_matrix
 
-    def _check_internet_access(self, subnet: NetworkNode) -> bool:
-        """Check if subnet has internet access based on route tables and NSGs."""
-        # Check for 0.0.0.0/0 route
-        for node in self.nodes.values():
-            if node.type == "route_table" and subnet.name in node.properties.get("associatedSubnets", []):
-                for route in node.properties.get("routes", []):
-                    if route.get("addressPrefix") == "0.0.0.0/0":
-                        if route.get("nextHopType") == "Internet":
-                            return True
-                        elif route.get("nextHopType") in ["VirtualAppliance", "VirtualNetworkGateway"]:
-                            return True  # Via NVA/Gateway
-
-        # If no explicit route, Azure provides default internet access
-        return True
-
-    def _identify_issues(self):
+    def _identify_issues(self) -> None:
         """Identify potential network security issues."""
         issues = []
 
@@ -653,13 +648,12 @@ class NetworkGraphBuilder:
                     })
 
                 # Check for risky ports open to internet
-                risky_ports = ["22", "3389", "445", "1433", "3306", "5432"]
-                if rule.source in ["*", "Internet", "0.0.0.0/0"]:
-                    for port in risky_ports:
+                if rule.source in INTERNET_SOURCES:
+                    for port, description in RISKY_PORTS.items():
                         if port in rule.port or rule.port == "*":
                             issues.append({
                                 "severity": "High",
-                                "issue": f"Risky port {port} exposed to internet",
+                                "issue": f"Risky port {port} ({description}) exposed to internet",
                                 "rule_source": rule.rule_source,
                                 "recommendation": f"Restrict access to port {port} from specific IPs only"
                             })
@@ -675,6 +669,21 @@ class NetworkGraphBuilder:
                 })
 
         self.connectivity_matrix["potential_issues"] = issues
+
+    def _check_internet_access(self, subnet: NetworkNode) -> bool:
+        """Check if subnet has internet access based on route tables and NSGs."""
+        # Check for 0.0.0.0/0 route
+        for node in self.nodes.values():
+            if node.type == "route_table" and subnet.name in node.properties.get("associatedSubnets", []):
+                for route in node.properties.get("routes", []):
+                    if route.get("addressPrefix") == "0.0.0.0/0":
+                        if route.get("nextHopType") == "Internet":
+                            return True
+                        elif route.get("nextHopType") in ["VirtualAppliance", "VirtualNetworkGateway"]:
+                            return True  # Via NVA/Gateway
+
+        # If no explicit route, Azure provides default internet access
+        return True
 
     def get_graph_data(self) -> dict:
         """Get graph data in a format suitable for visualization."""
