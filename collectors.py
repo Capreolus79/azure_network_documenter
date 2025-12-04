@@ -5,8 +5,9 @@ Modules to collect network-related resources from Azure using Azure CLI.
 
 import json
 import subprocess
-from dataclasses import dataclass
 from typing import Optional
+
+from utils import logger
 
 
 def run_az_command(command: list[str]) -> Optional[list | dict]:
@@ -16,42 +17,41 @@ def run_az_command(command: list[str]) -> Optional[list | dict]:
         result = subprocess.run(
             full_command,
             capture_output=True,
-            text=True,
-            shell=True
+            text=True
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout)
         return None
     except (json.JSONDecodeError, FileNotFoundError) as e:
-        print(f"  Warning: Command failed - {' '.join(command)}: {e}")
+        logger.warning(f"Command failed - {' '.join(command)}: {e}")
         return None
 
 
-@dataclass
 class AzureCollector:
     """Collector for Azure network resources."""
 
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         self.config = config
-        self.subscription_filter = ""
-        if config.subscription_id:
-            self.subscription_filter = f"--subscription {config.subscription_id}"
 
-    def _get_resource_group_filter(self) -> str:
-        """Get resource group filter for queries."""
-        if self.config.resource_groups:
-            rgs = "', '".join(self.config.resource_groups)
-            return f"[?resourceGroup == '{rgs}']"
-        return ""
+    def _filter_by_resource_groups(self, resources: list[dict]) -> list[dict]:
+        """Filter resources by configured resource groups."""
+        if not self.config.resource_groups:
+            return resources
+
+        rg_set = {rg.lower() for rg in self.config.resource_groups}
+        return [
+            r for r in resources
+            if r.get('resourceGroup', '').lower() in rg_set
+        ]
 
     def collect_vnets(self) -> list:
         """Collect all Virtual Networks."""
-        print("  Collecting Virtual Networks...")
+        logger.info("Collecting Virtual Networks...")
         cmd = ["network", "vnet", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        vnets = run_az_command(cmd) or []
+        vnets = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         # Enrich with subnet details
         for vnet in vnets:
@@ -71,12 +71,12 @@ class AzureCollector:
                 }
                 vnet["subnets_detail"].append(subnet_info)
 
-        print(f"    Found {len(vnets)} VNets")
+        logger.info(f"Found {len(vnets)} VNets")
         return vnets
 
     def collect_subnets(self) -> list:
         """Collect all subnets with their configurations."""
-        print("  Collecting Subnets...")
+        logger.info("Collecting Subnets...")
         subnets = []
 
         # Get subnets from vnets
@@ -107,17 +107,17 @@ class AzureCollector:
                 }
                 subnets.append(subnet_data)
 
-        print(f"    Found {len(subnets)} Subnets")
+        logger.info(f"Found {len(subnets)} Subnets")
         return subnets
 
     def collect_nsgs(self) -> list:
         """Collect all Network Security Groups with rules."""
-        print("  Collecting Network Security Groups...")
+        logger.info("Collecting Network Security Groups...")
         cmd = ["network", "nsg", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        nsgs = run_az_command(cmd) or []
+        nsgs = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         # Enrich with full rule details
         for nsg in nsgs:
@@ -149,17 +149,17 @@ class AzureCollector:
                     "destinationPortRange": rule.get("destinationPortRange"),
                 })
 
-        print(f"    Found {len(nsgs)} NSGs")
+        logger.info(f"Found {len(nsgs)} NSGs")
         return nsgs
 
     def collect_firewalls(self) -> list:
         """Collect Azure Firewalls."""
-        print("  Collecting Azure Firewalls...")
+        logger.info("Collecting Azure Firewalls...")
         cmd = ["network", "firewall", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        firewalls = run_az_command(cmd) or []
+        firewalls = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         for fw in firewalls:
             # Extract IP configurations
@@ -172,17 +172,17 @@ class AzureCollector:
                     "subnet": ip_config.get("subnet", {}).get("id") if ip_config.get("subnet") else None,
                 })
 
-        print(f"    Found {len(firewalls)} Azure Firewalls")
+        logger.info(f"Found {len(firewalls)} Azure Firewalls")
         return firewalls
 
     def collect_firewall_policies(self) -> list:
         """Collect Firewall Policies with rule collections."""
-        print("  Collecting Firewall Policies...")
+        logger.info("Collecting Firewall Policies...")
         cmd = ["network", "firewall", "policy", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        policies = run_az_command(cmd) or []
+        policies = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         for policy in policies:
             policy_name = policy.get("name")
@@ -237,17 +237,17 @@ class AzureCollector:
 
                 policy["ruleCollectionGroups_detail"].append(rcg_data)
 
-        print(f"    Found {len(policies)} Firewall Policies")
+        logger.info(f"Found {len(policies)} Firewall Policies")
         return policies
 
     def collect_route_tables(self) -> list:
         """Collect Route Tables."""
-        print("  Collecting Route Tables...")
+        logger.info("Collecting Route Tables...")
         cmd = ["network", "route-table", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        route_tables = run_az_command(cmd) or []
+        route_tables = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         for rt in route_tables:
             rt["routes_processed"] = []
@@ -259,17 +259,17 @@ class AzureCollector:
                     "nextHopIpAddress": route.get("nextHopIpAddress"),
                 })
 
-        print(f"    Found {len(route_tables)} Route Tables")
+        logger.info(f"Found {len(route_tables)} Route Tables")
         return route_tables
 
     def collect_private_endpoints(self) -> list:
         """Collect Private Endpoints."""
-        print("  Collecting Private Endpoints...")
+        logger.info("Collecting Private Endpoints...")
         cmd = ["network", "private-endpoint", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        endpoints = run_az_command(cmd) or []
+        endpoints = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         for ep in endpoints:
             ep["connections"] = []
@@ -281,12 +281,12 @@ class AzureCollector:
                     "status": conn.get("privateLinkServiceConnectionState", {}).get("status"),
                 })
 
-        print(f"    Found {len(endpoints)} Private Endpoints")
+        logger.info(f"Found {len(endpoints)} Private Endpoints")
         return endpoints
 
     def collect_peerings(self) -> list:
         """Collect VNet Peerings."""
-        print("  Collecting VNet Peerings...")
+        logger.info("Collecting VNet Peerings...")
         peerings = []
 
         cmd = ["network", "vnet", "list"]
@@ -322,28 +322,28 @@ class AzureCollector:
                     "peeringSyncLevel": peering.get("peeringSyncLevel"),
                 })
 
-        print(f"    Found {len(peerings)} VNet Peerings")
+        logger.info(f"Found {len(peerings)} VNet Peerings")
         return peerings
 
     def collect_public_ips(self) -> list:
         """Collect Public IP Addresses."""
-        print("  Collecting Public IPs...")
+        logger.info("Collecting Public IPs...")
         cmd = ["network", "public-ip", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        public_ips = run_az_command(cmd) or []
-        print(f"    Found {len(public_ips)} Public IPs")
+        public_ips = self._filter_by_resource_groups(run_az_command(cmd) or [])
+        logger.info(f"Found {len(public_ips)} Public IPs")
         return public_ips
 
     def collect_private_dns_zones(self) -> list:
         """Collect Private DNS Zones."""
-        print("  Collecting Private DNS Zones...")
+        logger.info("Collecting Private DNS Zones...")
         cmd = ["network", "private-dns", "zone", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        zones = run_az_command(cmd) or []
+        zones = self._filter_by_resource_groups(run_az_command(cmd) or [])
 
         for zone in zones:
             zone_name = zone.get("name")
@@ -359,60 +359,60 @@ class AzureCollector:
             links = run_az_command(links_cmd) or []
             zone["virtualNetworkLinks"] = links
 
-        print(f"    Found {len(zones)} Private DNS Zones")
+        logger.info(f"Found {len(zones)} Private DNS Zones")
         return zones
 
     def collect_app_gateways(self) -> list:
         """Collect Application Gateways."""
-        print("  Collecting Application Gateways...")
+        logger.info("Collecting Application Gateways...")
         cmd = ["network", "application-gateway", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        gateways = run_az_command(cmd) or []
-        print(f"    Found {len(gateways)} Application Gateways")
+        gateways = self._filter_by_resource_groups(run_az_command(cmd) or [])
+        logger.info(f"Found {len(gateways)} Application Gateways")
         return gateways
 
     def collect_load_balancers(self) -> list:
         """Collect Load Balancers."""
-        print("  Collecting Load Balancers...")
+        logger.info("Collecting Load Balancers...")
         cmd = ["network", "lb", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        lbs = run_az_command(cmd) or []
-        print(f"    Found {len(lbs)} Load Balancers")
+        lbs = self._filter_by_resource_groups(run_az_command(cmd) or [])
+        logger.info(f"Found {len(lbs)} Load Balancers")
         return lbs
 
     def collect_vnet_gateways(self) -> list:
         """Collect Virtual Network Gateways."""
-        print("  Collecting VNet Gateways...")
+        logger.info("Collecting VNet Gateways...")
         cmd = ["network", "vnet-gateway", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        gateways = run_az_command(cmd) or []
-        print(f"    Found {len(gateways)} VNet Gateways")
+        gateways = self._filter_by_resource_groups(run_az_command(cmd) or [])
+        logger.info(f"Found {len(gateways)} VNet Gateways")
         return gateways
 
     def collect_bastion_hosts(self) -> list:
         """Collect Bastion Hosts."""
-        print("  Collecting Bastion Hosts...")
+        logger.info("Collecting Bastion Hosts...")
         cmd = ["network", "bastion", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        bastions = run_az_command(cmd) or []
-        print(f"    Found {len(bastions)} Bastion Hosts")
+        bastions = self._filter_by_resource_groups(run_az_command(cmd) or [])
+        logger.info(f"Found {len(bastions)} Bastion Hosts")
         return bastions
 
     def collect_network_interfaces(self) -> list:
         """Collect Network Interfaces."""
-        print("  Collecting Network Interfaces...")
+        logger.info("Collecting Network Interfaces...")
         cmd = ["network", "nic", "list"]
         if self.config.subscription_id:
             cmd.extend(["--subscription", self.config.subscription_id])
 
-        nics = run_az_command(cmd) or []
-        print(f"    Found {len(nics)} Network Interfaces")
+        nics = self._filter_by_resource_groups(run_az_command(cmd) or [])
+        logger.info(f"Found {len(nics)} Network Interfaces")
         return nics

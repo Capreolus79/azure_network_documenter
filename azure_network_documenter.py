@@ -14,6 +14,7 @@ from pathlib import Path
 from datetime import datetime
 
 from collectors import AzureCollector
+from utils import logger
 from graph_builder import NetworkGraphBuilder
 from visualizer import NetworkVisualizer
 from exporters import MarkdownExporter, JSONExporter
@@ -49,27 +50,26 @@ class AzureNetworkDocumenter:
             result = subprocess.run(
                 ["az", "account", "show"],
                 capture_output=True,
-                text=True,
-                shell=True
+                text=True
             )
             if result.returncode != 0:
-                print("Error: Not logged into Azure CLI. Run 'az login' first.")
+                logger.error("Not logged into Azure CLI. Run 'az login' first.")
                 return False
             return True
         except FileNotFoundError:
-            print("Error: Azure CLI not found. Please install it first.")
+            logger.error("Azure CLI not found. Please install it first.")
             return False
 
     def collect_data(self) -> dict:
         """Collect all network-related data from Azure."""
-        print("\n" + "=" * 60)
-        print("AZURE NETWORK DOCUMENTER")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("AZURE NETWORK DOCUMENTER")
+        logger.info("=" * 60)
 
         if not self.check_azure_cli():
             return {}
 
-        print("\nCollecting Azure network data...")
+        logger.info("Collecting Azure network data...")
 
         # Collect all network resources
         self.network_data = {
@@ -99,17 +99,17 @@ class AzureNetworkDocumenter:
 
     def build_graph(self) -> dict:
         """Build a network graph from collected data."""
-        print("\nBuilding network graph...")
+        logger.info("Building network graph...")
         return self.graph_builder.build(self.network_data)
 
     def analyze_connectivity(self) -> dict:
         """Analyze what can connect to what based on rules."""
-        print("\nAnalyzing connectivity...")
+        logger.info("Analyzing connectivity...")
         return self.graph_builder.analyze_connectivity()
 
     def generate_visualization(self, output_path: str = None) -> str:
         """Generate interactive HTML visualization."""
-        print("\nGenerating visualization...")
+        logger.info("Generating visualization...")
         if output_path is None:
             output_path = Path(self.config.output_dir) / "network_map.html"
 
@@ -165,13 +165,13 @@ class AzureNetworkDocumenter:
         md_path = self.export_markdown()
         json_path = self.export_json()
 
-        print("\n" + "=" * 60)
-        print("DOCUMENTATION COMPLETE")
-        print("=" * 60)
-        print(f"\nOutputs generated:")
-        print(f"  - Interactive Map: {html_path}")
-        print(f"  - Markdown Docs:   {md_path}")
-        print(f"  - JSON Data:       {json_path}")
+        logger.info("=" * 60)
+        logger.info("DOCUMENTATION COMPLETE")
+        logger.info("=" * 60)
+        logger.info("Outputs generated:")
+        logger.info(f"  - Interactive Map: {html_path}")
+        logger.info(f"  - Markdown Docs:   {md_path}")
+        logger.info(f"  - JSON Data:       {json_path}")
 
         return {
             "data": data,
@@ -234,13 +234,28 @@ def main():
 
     if args.from_json:
         # Load from existing JSON
-        print(f"Loading data from {args.from_json}...")
-        with open(args.from_json, 'r') as f:
-            documenter.network_data = json.load(f)
+        logger.info(f"Loading data from {args.from_json}...")
+        try:
+            with open(args.from_json, 'r') as f:
+                documenter.network_data = json.load(f)
+        except FileNotFoundError:
+            logger.error(f"File not found: {args.from_json}")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in {args.from_json}: {e}")
+            sys.exit(1)
+        except PermissionError:
+            logger.error(f"Permission denied reading {args.from_json}")
+            sys.exit(1)
+
+        # Create output directory
+        Path(args.output).mkdir(parents=True, exist_ok=True)
+
         documenter.build_graph()
         documenter.analyze_connectivity()
         documenter.generate_visualization()
         documenter.export_markdown()
+        documenter.export_json()
     else:
         # Run full collection
         documenter.run()

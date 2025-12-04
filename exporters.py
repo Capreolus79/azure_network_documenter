@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+from utils import extract_name_from_id
+
 
 class MarkdownExporter:
     """Export network documentation as Markdown."""
@@ -187,9 +189,9 @@ class MarkdownExporter:
                 lines.append(f"- **Resource Group:** {subnet.get('resourceGroup')}")
 
                 if subnet.get('nsg_id'):
-                    lines.append(f"- **NSG:** {self._extract_name(subnet.get('nsg_id'))}")
+                    lines.append(f"- **NSG:** {extract_name_from_id(subnet.get('nsg_id'))}")
                 if subnet.get('routeTable_id'):
-                    lines.append(f"- **Route Table:** {self._extract_name(subnet.get('routeTable_id'))}")
+                    lines.append(f"- **Route Table:** {extract_name_from_id(subnet.get('routeTable_id'))}")
 
                 delegations = [d.get('serviceName') for d in subnet.get('delegations', [])]
                 if delegations:
@@ -224,11 +226,11 @@ class MarkdownExporter:
                 f"- **Location:** {nsg.get('location')}",
             ])
 
-            associated_subnets = [self._extract_name(s.get('id')) for s in nsg.get('subnets', [])]
+            associated_subnets = [extract_name_from_id(s.get('id')) for s in nsg.get('subnets', [])]
             if associated_subnets:
                 lines.append(f"- **Associated Subnets:** {', '.join(associated_subnets)}")
 
-            associated_nics = [self._extract_name(n.get('id')) for n in nsg.get('networkInterfaces', [])]
+            associated_nics = [extract_name_from_id(n.get('id')) for n in nsg.get('networkInterfaces', [])]
             if associated_nics:
                 lines.append(f"- **Associated NICs:** {', '.join(associated_nics)}")
 
@@ -275,7 +277,7 @@ class MarkdownExporter:
             ])
 
             if fw.get('firewallPolicy'):
-                lines.append(f"- **Firewall Policy:** {self._extract_name(fw.get('firewallPolicy', {}).get('id'))}")
+                lines.append(f"- **Firewall Policy:** {extract_name_from_id(fw.get('firewallPolicy', {}).get('id'))}")
 
             lines.append("")
             lines.append("#### IP Configurations")
@@ -286,7 +288,7 @@ class MarkdownExporter:
                 if ip_config.get('privateIpAddress'):
                     lines.append(f"  - Private IP: {ip_config.get('privateIpAddress')}")
                 if ip_config.get('publicIpAddress'):
-                    lines.append(f"  - Public IP: {self._extract_name(ip_config.get('publicIpAddress'))}")
+                    lines.append(f"  - Public IP: {extract_name_from_id(ip_config.get('publicIpAddress'))}")
 
             lines.append("")
 
@@ -356,7 +358,7 @@ class MarkdownExporter:
                 f"- **Disable BGP Propagation:** {rt.get('disableBgpRoutePropagation', False)}",
             ])
 
-            associated = [self._extract_name(s.get('id')) for s in rt.get('subnets', [])]
+            associated = [extract_name_from_id(s.get('id')) for s in rt.get('subnets', [])]
             if associated:
                 lines.append(f"- **Associated Subnets:** {', '.join(associated)}")
 
@@ -391,7 +393,7 @@ class MarkdownExporter:
         lines.append("|-------------|--------------|-------------|-------|-------------|-------------------|-----------------|")
 
         for peering in peerings:
-            remote = self._extract_name(peering.get('remoteVnetId', ''))
+            remote = extract_name_from_id(peering.get('remoteVnetId', ''))
             lines.append(
                 f"| {peering.get('sourceVnet')} | {peering.get('name')} | {remote} | "
                 f"{peering.get('peeringState')} | {peering.get('allowVirtualNetworkAccess')} | "
@@ -416,10 +418,10 @@ class MarkdownExporter:
         lines.append("|------|----------------|--------|-----------------|-----------|--------|")
 
         for ep in endpoints:
-            subnet = self._extract_name(ep.get('subnet', {}).get('id', '')) if ep.get('subnet') else '-'
+            subnet = extract_name_from_id(ep.get('subnet', {}).get('id', '')) if ep.get('subnet') else '-'
 
             for conn in ep.get('connections', []):
-                target = self._extract_name(conn.get('privateLinkServiceId', ''))
+                target = extract_name_from_id(conn.get('privateLinkServiceId', ''))
                 groups = ', '.join(conn.get('groupIds', []))
                 status = conn.get('status', '-')
 
@@ -538,13 +540,6 @@ class MarkdownExporter:
             lines.append("")
 
         return lines
-
-    def _extract_name(self, resource_id: str) -> str:
-        """Extract resource name from Azure resource ID."""
-        if not resource_id:
-            return ""
-        parts = resource_id.split("/")
-        return parts[-1] if parts else ""
 
 
 class JSONExporter:
